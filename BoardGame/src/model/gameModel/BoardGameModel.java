@@ -1,4 +1,4 @@
-package model_;
+package model.gameModel;
 
 import java.io.FileNotFoundException;
 import java.io.IOException;
@@ -11,6 +11,7 @@ import java.io.PrintWriter;
 import java.net.Socket;
 import java.util.Observable;
 
+import general.PresenterOrder;
 import properties.MyProperties;
 import properties.PropertiesHandler;
 import model.algorithm.AI;
@@ -20,7 +21,6 @@ import model.domain.ReversiState;
 
 public class BoardGameModel extends Observable implements Model {
 
-	@SuppressWarnings("unused")
 	private AI ai;
 	private GameDomain game;
 	private algorithmFactory algorithmFactory;
@@ -28,7 +28,7 @@ public class BoardGameModel extends Observable implements Model {
 	private Solution solution;
 	private int hardLevel;
 	private int gameOver;
-	private String hintGame;
+	private int hintGame;
 	private Problem prob;
 	private InputStream input;
 	private OutputStream output;
@@ -38,6 +38,8 @@ public class BoardGameModel extends Observable implements Model {
 	private boolean firstConnection;
 	private boolean haveConnection;
 	private boolean propertiesLoaded;
+	
+	private final boolean connectToServer = false;
 	
 	/**
 	 * <h1> BoardGameModel <h1> <p>
@@ -49,7 +51,7 @@ public class BoardGameModel extends Observable implements Model {
 		gameFactory = new GameDomainFactory();
 		this.gameOver = -1;
 		solution = new Solution();
-		hintGame = new String();
+		hintGame = -1;
 		prob = new Problem();
 		properties = new MyProperties();
 		properHendler = new PropertiesHandler();
@@ -95,25 +97,29 @@ public class BoardGameModel extends Observable implements Model {
 	 * 
 	 */
 	public void gameManager(int row, int column) throws Exception {
+		//TODO: implement player turn in new thread
 		gameOver = game.playerTurn(row, column);
 		
 		//if computer has no more moves -> skip turn
 		this.setChanged();
-		this.notifyObservers("Computer Turn");
+		this.notifyObservers(PresenterOrder.ComputerTurn);
 	}
 
 	/**
 	 *  <h1> solveDomain <h1> <p>
 	 * the method will solve the game  
 	 * 
-	 */
-	
+	 */	
 	@Override
 	public void solveDomain() throws IOException, ClassNotFoundException {
-		if((firstConnection == true) && (haveConnection == false)) {
-			//load properties and connect to server
-			System.out.println("connect to server and load properties");
-			connectToServer();
+		//TODO: implement solve domain in new thread
+		if(connectToServer)
+		{
+			if((firstConnection == true) && (haveConnection == false)) {
+				//load properties and connect to server
+				System.out.println("connect to server and load properties");
+				connectToServer();
+			}
 		}
 		
 		if(game instanceof ReversiState)
@@ -126,36 +132,47 @@ public class BoardGameModel extends Observable implements Model {
 				this.notifyObservers();
 			}
 		}
-		//set problem state to be the current state
-		prob.setGame(game.getState());
-		if(firstConnection == false) 
-			prob.setStatus(2);
-		// send server a problem
-		new ObjectOutputStream(output).writeObject(prob);
-		output.flush();
-		// wait for a solution
-		solution = null;
-		solution = (Solution) new ObjectInputStream(input).readObject();
-		gameOver = game.setSolution(solution.getCurrentState());
-		//disconnect from server
-		firstConnection = false;
-		// have a solution - notify
+		if(connectToServer)
+		{
+			//set problem state to be the current state
+			prob.setGame(game.getState());
+			if(firstConnection == false) 
+				prob.setStatus(2);
+			// send server a problem
+			new ObjectOutputStream(output).writeObject(prob);
+			output.flush();
+			// wait for a solution
+			solution = null;
+			solution = (Solution) new ObjectInputStream(input).readObject();
+			gameOver = game.setSolution(solution.getCurrentState());
+			//disconnect from server
+			firstConnection = false;
+			// have a solution - notify
+		}
+		else
+		{
+			game.computerTurn(ai);
+		}
 		
 		if(game instanceof ReversiState)
 		{
 			ReversiState tempGame = (ReversiState) game.getState();
-			//if player has no more moves -> start automaticly computer turn
+			//if player has no more moves -> start automatically computer turn
 			if(tempGame.getBlackMoves().isEmpty() == true){
+				//TODO: instead of println, should notify to user this message.
 				System.out.println("no black moves");
 				this.setChanged();
-				this.notifyObservers("Computer Turn");
+				this.notifyObservers(PresenterOrder.ComputerTurn);
 			}
 		}
-		
-		this.setChanged();
-		this.notifyObservers();
+		else
+		{
+			this.setChanged();
+			this.notifyObservers();
+		}
 	}
 
+	//TODO: check if need to use this method
 	/**
 	 * <h1> saveGame <h1> <p>
 	 * 
@@ -219,19 +236,25 @@ public class BoardGameModel extends Observable implements Model {
 	 */
 	@Override
 	public void getHint() throws Exception {
-		// send server client want an hint
-		if(haveConnection == false)
-			throw new Exception("You are not connected to the server");
-		if(firstConnection == true)
-			throw new Exception("You are not connected to the server");
-		prob.setStatus(3);
-		prob.setGame(game.getState());
-		
-		new ObjectOutputStream(output).writeObject(prob);
-		output.flush();
-		
-		//wait for solution
-		hintGame = (String)new ObjectInputStream(input).readObject();
+		//TODO: implement getHint in new thread
+		if(connectToServer)
+		{
+			// send server client want an hint
+			if(haveConnection == false)
+				throw new Exception("You are not connected to the server");
+			if(firstConnection == true)
+				throw new Exception("You are not connected to the server");
+			prob.setStatus(3);
+			prob.setGame(game.getState());
+			
+			new ObjectOutputStream(output).writeObject(prob);
+			output.flush();
+			
+			//wait for solution
+			hintGame = (int)new ObjectInputStream(input).readObject();
+		}
+		else
+			hintGame = game.getHint(ai,  hardLevel);
 		
 		//notify presenter
 		this.setChanged();
@@ -244,9 +267,9 @@ public class BoardGameModel extends Observable implements Model {
 	 */
 	public String getHintString() {
 		String hint = new String();
-		if (hintGame.isEmpty() == false) {
-			hint = new String(hintGame);
-			hintGame = new String();
+		if (hintGame != -1) {
+			hint = new String("Row: "+hintGame/10+", Column: "+hintGame%10);
+			hintGame = -1;
 		}
 		return hint;
 	}
@@ -317,7 +340,6 @@ public class BoardGameModel extends Observable implements Model {
 	 * the method will load the properties from the XML file
 	 * 
 	 */
-
 	public void loadProperties() throws FileNotFoundException {
 		if(propertiesLoaded == false) {
 			properties = properHendler.readProperties();
